@@ -64,14 +64,9 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
         when {
-            permissions.getOrDefault(android.Manifest.permission.ACCESS_FINE_LOCATION, false) -> {
+            permissions.getOrDefault(android.Manifest.permission.BLUETOOTH_CONNECT, false) -> {
                 // Precise location access granted, service can run
-                startForegroundService()
-            }
 
-            permissions.getOrDefault(android.Manifest.permission.ACCESS_COARSE_LOCATION, false) -> {
-                // Only approximate location access granted, service can still run.
-                startForegroundService()
             }
 
             else -> {
@@ -122,12 +117,7 @@ class MainActivity : ComponentActivity() {
     private fun onStartOrStopForegroundServiceClick() {
         if (exampleService == null) {
             // service is not yet running, start it after permission check
-            locationPermissionRequest.launch(
-                arrayOf(
-                    android.Manifest.permission.ACCESS_FINE_LOCATION,
-                    android.Manifest.permission.ACCESS_COARSE_LOCATION
-                )
-            )
+            startForegroundService()
         } else {
             // service is already running, stop it
             exampleService?.stopForegroundService()
@@ -154,15 +144,8 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun onServiceConnected() {
-        lifecycleScope.launch {
-            // observe location updates from the service
-            exampleService?.locationFlow?.map {
-                it?.let { location ->
-                    "${location.latitude}, ${location.longitude}"
-                }
-            }?.collectLatest {
-                displayableLocation = it
-            }
+        exampleService?.state?.observe(this){
+            displayableLocation = it;
         }
     }
 
