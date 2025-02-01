@@ -1,34 +1,23 @@
 package com.landomen.sample.foregroundservice14.service
 
+import android.Manifest
+import android.annotation.SuppressLint
 import android.app.Service
+import android.bluetooth.BluetoothDevice
+import android.bluetooth.BluetoothSocket
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
-import android.location.Location
 import android.os.Binder
 import android.os.Build
 import android.os.IBinder
-import android.os.Looper
 import android.util.Log
 import android.widget.Toast
+import androidx.compose.runtime.mutableStateOf
+import androidx.core.app.ActivityCompat
 import androidx.core.app.ServiceCompat
-import com.google.android.gms.location.FusedLocationProviderClient
-import com.google.android.gms.location.LocationCallback
-import com.google.android.gms.location.LocationRequest
-import com.google.android.gms.location.LocationResult
-import com.google.android.gms.location.LocationServices
+import androidx.lifecycle.MutableLiveData
 import com.landomen.sample.foregroundservice14.notification.NotificationsHelper
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.cancelChildren
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -37,13 +26,12 @@ import kotlin.time.Duration.Companion.seconds
 class ExampleLocationForegroundService : Service() {
     private val binder = LocalBinder()
 
-    private val coroutineScope = CoroutineScope(Job())
-    private lateinit var fusedLocationClient: FusedLocationProviderClient
-    private lateinit var locationCallback: LocationCallback
-    private var timerJob: Job? = null
+    private var thread: Thread? = null;
+    private var run = true;
+    //    private lateinit var scan : BluetoothSocket
+    val device_name = "__dji_remote__"
 
-    private val _locationFlow = MutableStateFlow<Location?>(null)
-    var locationFlow: StateFlow<Location?> = _locationFlow
+    var state = MutableLiveData("")
 
     inner class LocalBinder : Binder() {
         fun getService(): ExampleLocationForegroundService = this@ExampleLocationForegroundService
@@ -58,7 +46,13 @@ class ExampleLocationForegroundService : Service() {
         Log.d(TAG, "onStartCommand")
 
         startAsForegroundService()
-        startLocationUpdates()
+
+        // Start a thread here
+        if (thread == null || !thread!!.isAlive) {
+            thread = Thread(this::main);
+            run = true;
+            thread!!.start()
+        }
 
         return super.onStartCommand(intent, flags, startId)
     }
@@ -68,21 +62,60 @@ class ExampleLocationForegroundService : Service() {
         Log.d(TAG, "onCreate")
 
         Toast.makeText(this, "Foreground Service created", Toast.LENGTH_SHORT).show()
-
-        setupLocationUpdates()
-        startServiceRunningTicker()
     }
 
     override fun onDestroy() {
         super.onDestroy()
         Log.d(TAG, "onDestroy")
 
-        fusedLocationClient.removeLocationUpdates(locationCallback)
-        timerJob?.cancel()
-        coroutineScope.coroutineContext.cancelChildren()
+        // Stop the thread here
+        run = false;
 
         Toast.makeText(this, "Foreground Service destroyed", Toast.LENGTH_SHORT).show()
     }
+
+    @SuppressLint("MissingPermission")
+    fun main() {
+        val bluetoothManager = getSystemService(BLUETOOTH_SERVICE) as? android.bluetooth.BluetoothManager
+        val bluetoothAdapter = bluetoothManager?.adapter
+        val bluetoothLeScanner = bluetoothAdapter?.bluetoothLeScanner
+
+        if (bluetoothLeScanner == null) {
+            Log.e(TAG, "Bluetooth LE Scanner not available")
+            return
+        }
+        var arduino: BluetoothDevice? = null
+        var found = false
+
+        val scanCallback = object : android.bluetooth.le.ScanCallback() {
+            @SuppressLint("MissingPermission")
+            override fun onScanResult(callbackType: Int, result: android.bluetooth.le.ScanResult) {
+                val device = result.device
+                val deviceInfo = "${device.name ?: "Unknown"} (${device.address})"
+                Log.d(TAG, "Discovered BLE device: $deviceInfo")
+                if (device.name == device_name){
+                    arduino = device
+                    found = true;
+                }
+            }
+
+            override fun onScanFailed(errorCode: Int) {
+                Log.e(TAG, "BLE scan failed with error code: $errorCode")
+            }
+        }
+
+
+        while (run) {
+            bluetoothLeScanner.startScan(scanCallback)
+            while (!found)
+                Thread.sleep(100) // Scan for 10 seconds
+            bluetoothLeScanner.stopScan(scanCallback)
+            state.postValue("DJI BLE found!")
+
+
+        }
+    }
+
 
     /**
      * Promotes the service to a foreground service, showing a notification to the user.
@@ -99,7 +132,7 @@ class ExampleLocationForegroundService : Service() {
             1,
             NotificationsHelper.buildNotification(this),
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
             } else {
                 0
             }
@@ -111,63 +144,8 @@ class ExampleLocationForegroundService : Service() {
      * Can be called from inside or outside the service.
      */
     fun stopForegroundService() {
+        run = false;
         stopSelf()
-    }
-
-    /**
-     * Sets up the location updates using the FusedLocationProviderClient, but doesn't actually start them.
-     * To start the location updates, call [startLocationUpdates].
-     */
-    private fun setupLocationUpdates() {
-        fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
-        locationCallback = object : LocationCallback() {
-            override fun onLocationResult(locationResult: LocationResult) {
-                for (location in locationResult.locations) {
-                    _locationFlow.value = location
-                }
-            }
-        }
-    }
-
-    /**
-     * Starts the location updates using the FusedLocationProviderClient.
-     */
-    private fun startLocationUpdates() {
-        fusedLocationClient.requestLocationUpdates(
-            LocationRequest.Builder(
-                LOCATION_UPDATES_INTERVAL_MS
-            ).build(), locationCallback, Looper.getMainLooper()
-        )
-    }
-
-    /**
-     * Starts a ticker that shows a toast every [TICKER_PERIOD_SECONDS] seconds to indicate that the service is still running.
-     */
-    private fun startServiceRunningTicker() {
-        timerJob?.cancel()
-        timerJob = coroutineScope.launch {
-            tickerFlow()
-                .collectLatest {
-                    withContext(Dispatchers.Main) {
-                        Toast.makeText(
-                            this@ExampleLocationForegroundService,
-                            "Foreground Service still running!",
-                            Toast.LENGTH_SHORT
-                        ).show()
-                    }
-                }
-        }
-    }
-
-    private fun tickerFlow(
-        period: Duration = TICKER_PERIOD_SECONDS,
-        initialDelay: Duration = TICKER_PERIOD_SECONDS
-    ) = flow {
-        delay(initialDelay)
-        while (true) {
-            emit(Unit)
-            delay(period)
-        }
     }
 
     companion object {
