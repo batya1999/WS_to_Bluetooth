@@ -4,8 +4,14 @@
 
     <!--  Request the general foreground service permission  -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN"/>
     <!--  Request the specific foreground service permission for each declared type  -->
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
 
     <!--  Request notification permission to be able to show the foreground service notification  -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
@@ -38,7 +44,7 @@
         <service
             android:name=".service.ExampleLocationForegroundService"
             android:exported="false"
-            android:foregroundServiceType="location" />
+            android:foregroundServiceType="connectedDevice" />
     </application>
 
 </manifest>
