@@ -62,12 +62,13 @@ def listen_to_joystick():
 
 def main():
     # Path to Firebase service account key JSON file
-    cred = credentials.Certificate("C:/Users/Username/Desktop/Controller-Communication/Controller-Communication/communication/dji-v0-firebase-adminsdk-fbsvc-aec497feec.json")
+    cred = credentials.Certificate(r"C:\Users\Username\Desktop\Controller-Communication\Controller-Communication\communication\dji-v0-firebase-adminsdk-fbsvc-f02ea7c198.json")
 
     
     # Initialize Firebase Admin SDK
     firebase_admin.initialize_app(cred, {
-        'databaseURL': 'https://dji-v0-default-rtdb.firebaseio.com'  # Your Firebase Realtime Database URL
+        'databaseURL': 'https://dji-v0-default-rtdb.firebaseio.com'
+
     })
 
     # Start listening to joystick data
