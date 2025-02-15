@@ -1,0 +1,30 @@
+{
+  "project_info": {
+    "project_number": "970589854443",
+    "firebase_url": "https://dji-v0-default-rtdb.firebaseio.com",
+    "project_id": "dji-v0",
+    "storage_bucket": "dji-v0.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:970589854443:android:8731882059a16bbb50bcae",
+        "android_client_info": {
+          "package_name": "com.landomen.sample.foregroundservice14"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBtwpMI-emegfFwfwjq1x5xYcxlfTT4gCE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

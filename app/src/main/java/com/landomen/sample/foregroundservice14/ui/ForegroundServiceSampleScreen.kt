@@ -60,7 +60,7 @@ private fun ForegroundServiceSampleScreenContent(
             .padding(32.dp)
     ) {
         Text(
-            text = stringResource(id = R.string.foreground_service_sample_description),
+            text = "",
             textAlign = TextAlign.Center
         )
 
