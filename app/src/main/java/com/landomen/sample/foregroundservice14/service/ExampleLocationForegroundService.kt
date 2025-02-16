@@ -4,8 +4,7 @@ import android.Manifest
 import kotlin.time.Duration.Companion.seconds
 import android.annotation.SuppressLint
 import android.app.Service
-import android.bluetooth.BluetoothDevice
-import android.bluetooth.BluetoothSocket
+import android.bluetooth.*
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
@@ -25,7 +24,8 @@ import com.google.firebase.database.FirebaseDatabase
 import com.google.firebase.database.ValueEventListener
 import com.landomen.sample.foregroundservice14.notification.NotificationsHelper
 import java.io.IOException
-import java.io.OutputStream
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.util.UUID
 
 /**
@@ -33,7 +33,7 @@ import java.util.UUID
  */
 class ExampleLocationForegroundService : Service() {
     private val binder = LocalBinder()
-
+    private lateinit var bleAd: BluetoothAdapter
     private var thread: Thread? = null
     private var run = true
     private lateinit var database: FirebaseDatabase
@@ -43,10 +43,12 @@ class ExampleLocationForegroundService : Service() {
 
     var state = MutableLiveData("")
 
-    // Bluetooth related variables
-    private var bluetoothSocket: BluetoothSocket? = null
-    private var outputStream: OutputStream? = null
-    private val uuid = UUID.fromString("34df14f4-d5fc-4725-99b5-17baf9fc3304") // Standard SerialPortService ID
+    // UUID for creating RFCOMM socket (keeping original as requested)
+    private val uuid = UUID.fromString("34df14f4-d5fc-4725-99b5-17baf9fc3304")
+
+    // BLE connection variables
+    private var bluetoothGatt: BluetoothGatt? = null
+    private var isConnected = false
 
     inner class LocalBinder : Binder() {
         fun getService(): ExampleLocationForegroundService = this@ExampleLocationForegroundService
@@ -76,7 +78,22 @@ class ExampleLocationForegroundService : Service() {
         super.onCreate()
         database = FirebaseDatabase.getInstance()
         dbReference = database.getReference("bluetooth_connections")
-
+        bleAd = BluetoothAdapter.getDefaultAdapter()
+        if (ActivityCompat.checkSelfPermission(
+                this,
+                Manifest.permission.BLUETOOTH_CONNECT
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            // TODO: Consider calling
+            //    ActivityCompat#requestPermissions
+            // here to request the missing permissions, and then overriding
+            //   public void onRequestPermissionsResult(int requestCode, String[] permissions,
+            //                                          int[] grantResults)
+            // to handle the case where the user grants the permission. See the documentation
+            // for ActivityCompat#requestPermissions for more details.
+            return
+        }
+        bleAd.enable()
         if (FirebaseApp.getApps(applicationContext).isEmpty()) {
             FirebaseApp.initializeApp(applicationContext)
         }
@@ -121,9 +138,7 @@ class ExampleLocationForegroundService : Service() {
             override fun onScanResult(callbackType: Int, result: android.bluetooth.le.ScanResult) {
                 val device = result.device
                 val deviceInfo = "${device.name ?: "Unknown"} (${device.address})"
-                val uuid = device.uuids
                 Log.d(TAG, "Discovered BLE device: $deviceInfo")
-//                device.uuids
 
                 // Check if the device name matches the DJI Remote device name
                 if (device.name == device_name && device.address == targetDeviceAddress) {
@@ -163,12 +178,30 @@ class ExampleLocationForegroundService : Service() {
     @SuppressLint("MissingPermission")
     private fun connectToDevice(device: BluetoothDevice) {
         try {
-            bluetoothSocket = device.createRfcommSocketToServiceRecord(uuid)
-            bluetoothSocket?.connect()
-            outputStream = bluetoothSocket?.outputStream
-            Log.d(TAG, "Connected to device: ${device.address}")
-            state.postValue("Connected to device: ${device.address}")
-        } catch (e: IOException) {
+            val gattCallback = object : BluetoothGattCallback() {
+                override fun onConnectionStateChange(gatt: BluetoothGatt?, status: Int, newState: Int) {
+                    if (newState == BluetoothProfile.STATE_CONNECTED) {
+                        Log.d(TAG, "Connected to GATT server.")
+                        isConnected = true
+                        state.postValue("Connected to device: ${device.address}")
+                        gatt?.discoverServices()
+                    } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+                        Log.d(TAG, "Disconnected from GATT server.")
+                        isConnected = false
+                        state.postValue("Disconnected from device: ${device.address}")
+                        bluetoothGatt = null
+                    }
+                }
+
+                override fun onServicesDiscovered(gatt: BluetoothGatt?, status: Int) {
+                    if (status == BluetoothGatt.GATT_SUCCESS) {
+                        Log.d(TAG, "Services discovered successfully")
+                    }
+                }
+            }
+
+            bluetoothGatt = device.connectGatt(this, false, gattCallback)
+        } catch (e: Exception) {
             Log.e(TAG, "Could not connect to device: ${e.message}")
             state.postValue("Connection failed: ${e.message}")
         }
@@ -176,45 +209,69 @@ class ExampleLocationForegroundService : Service() {
 
     private fun closeBluetoothConnection() {
         try {
-            bluetoothSocket?.close()
-            outputStream?.close()
+            if (ActivityCompat.checkSelfPermission(
+                    this,
+                    Manifest.permission.BLUETOOTH_CONNECT
+                ) != PackageManager.PERMISSION_GRANTED
+            ) {
+
+                return
+            }
+            bluetoothGatt?.close()
+            bluetoothGatt = null
+            isConnected = false
             Log.d(TAG, "Bluetooth connection closed")
-        } catch (e: IOException) {
+        } catch (e: Exception) {
             Log.e(TAG, "Could not close Bluetooth connection: ${e.message}")
         }
     }
 
+    @SuppressLint("MissingPermission")
     private fun sendDataToDevice(data: String) {
-        // Check if the Bluetooth socket is properly connected and output stream is initialized
-        if (bluetoothSocket == null || !bluetoothSocket!!.isConnected) {
-            Log.e(TAG, "Bluetooth socket is not connected")
+        // Check if BLE is connected
+        if (bluetoothGatt == null || !isConnected) {
+            Log.e(TAG, "Bluetooth is not connected")
             return
         }
 
-        // If output stream is null, attempt to initialize it
-//        if (outputStream == null) {
-//            try {
-//                outputStream = bluetoothSocket?.outputStream
-//                if (outputStream == null) {
-//                    Log.e(TAG, "Failed to initialize output stream")
-//                    return
-//                }
-//            } catch (e: IOException) {
-//                Log.e(TAG, "Error initializing output stream: ${e.message}")
-//                return
-//            }
-//        }
-
-        // Now safely send data to the output stream
         try {
-            outputStream?.write(data.toByteArray())
-            Log.d(TAG, "Data sent to device: $data")
-        } catch (e: IOException) {
+            // Extract the 4 values (first 16 chars of the string, 4 chars each)
+            val values = data.take(16).chunked(4).take(4).map {
+                it.padEnd(4, '0').toIntOrNull() ?: 0
+            }
+
+            val throttle = values.getOrElse(0) { 0 }
+            val yaw = values.getOrElse(1) { 0 }
+            val pitch = values.getOrElse(2) { 0 }
+            val roll = values.getOrElse(3) { 0 }
+
+            // Find a writable characteristic
+            for (service in bluetoothGatt?.services ?: emptyList()) {
+                for (characteristic in service.characteristics) {
+                    if (characteristic.properties and BluetoothGattCharacteristic.PROPERTY_WRITE != 0) {
+                        // Pack the data into a binary format
+                        val byteData = ByteBuffer.allocate(8)
+                            .order(ByteOrder.LITTLE_ENDIAN)
+                            .putShort(throttle.toShort())
+                            .putShort(yaw.toShort())
+                            .putShort(pitch.toShort())
+                            .putShort(roll.toShort())
+                            .array()
+
+                        characteristic.value = byteData
+                        val success = bluetoothGatt?.writeCharacteristic(characteristic) ?: false
+                        if (success) {
+                            Log.d(TAG, "Data sent to device: $data")
+                            return
+                        }
+                    }
+                }
+            }
+            Log.e(TAG, "No writable characteristic found")
+        } catch (e: Exception) {
             Log.e(TAG, "Error sending data to device: ${e.message}")
         }
     }
-
-
 
     private fun setupDatabaseListener() {
         val joystickRef = FirebaseDatabase.getInstance().getReference("joystick_data/readable")
