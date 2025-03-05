@@ -15,15 +15,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
-import androidx.lifecycle.lifecycleScope
-import com.landomen.sample.foregroundservice14.service.ExampleLocationForegroundService
+import com.landomen.sample.foregroundservice14.service.BluetoothForegroundService
 import com.landomen.sample.foregroundservice14.ui.ForegroundServiceSampleScreen
-import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
-    private var exampleService: ExampleLocationForegroundService? = null
+    private var exampleService: BluetoothForegroundService? = null
 
     private var serviceBoundState by mutableStateOf(false)
     private var displayableLocation by mutableStateOf<String?>(null)
@@ -35,7 +31,7 @@ class MainActivity : ComponentActivity() {
             // we've bound to ExampleLocationForegroundService, cast the IBinder and get ExampleLocationForegroundService instance.
             Log.d(TAG, "onServiceConnected")
 
-            val binder = service as ExampleLocationForegroundService.LocalBinder
+            val binder = service as BluetoothForegroundService.LocalBinder
             exampleService = binder.getService()
             serviceBoundState = true
 
@@ -131,14 +127,14 @@ class MainActivity : ComponentActivity() {
      */
     private fun startForegroundService() {
         // start the service
-        startForegroundService(Intent(this, ExampleLocationForegroundService::class.java))
+        startForegroundService(Intent(this, BluetoothForegroundService::class.java))
 
         // bind to the service to update UI
         tryToBindToServiceIfRunning()
     }
 
     private fun tryToBindToServiceIfRunning() {
-        Intent(this, ExampleLocationForegroundService::class.java).also { intent ->
+        Intent(this, BluetoothForegroundService::class.java).also { intent ->
             bindService(intent, connection, 0)
         }
     }

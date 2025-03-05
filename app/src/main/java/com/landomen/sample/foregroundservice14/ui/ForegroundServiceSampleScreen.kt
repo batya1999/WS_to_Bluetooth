@@ -163,7 +163,7 @@ private fun LocationUpdate(
         Spacer(modifier = Modifier.height(32.dp))
 
         Text(
-            text = stringResource(id = R.string.foreground_service_sample_last_location_title),
+            text = stringResource(id = R.string.Bluetooth_Found_Title),
             style = MaterialTheme.typography.titleMedium
         )
 
