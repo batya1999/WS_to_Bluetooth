@@ -18,54 +18,37 @@ import androidx.annotation.RequiresApi
 import androidx.core.app.ActivityCompat
 import androidx.core.app.ServiceCompat
 import androidx.lifecycle.MutableLiveData
-import com.google.firebase.FirebaseApp
-import com.google.firebase.database.DataSnapshot
-import com.google.firebase.database.DatabaseError
-import com.google.firebase.database.DatabaseReference
-import com.google.firebase.database.FirebaseDatabase
-import com.google.firebase.database.ValueEventListener
 import com.landomen.sample.foregroundservice14.notification.NotificationsHelper
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.UUID
-import android.os.*
-
-
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.Response
+import okhttp3.WebSocket
+import okhttp3.WebSocketListener
 
 class BluetoothForegroundService : Service() {
     private val binder = LocalBinder()
     private lateinit var bleAd: BluetoothAdapter
     private var thread: Thread? = null
     private var run = true
-    private lateinit var database: FirebaseDatabase
-    private lateinit var dbReference: DatabaseReference
-//    val device_name = "2_dji_remote__" // Name of the DJI Remote device NEO
-    val device_name = "4_dji_remote__" // Name of the DJI Remote device AVATA
-
+    val device_name = "5_dji_remote__" // Name of the DJI Remote device AVATA
     val targetDeviceAddress = "A4:CF:12:05:2E:1E" // avata version (__dji_remote__)
-//    val targetDeviceAddress = "A4:CF:12:03:CF:4E" //neo version (2_dji_remote__)
     var state = MutableLiveData("")
 
-//     UUID for creating RFCOMM socket
-//    private val uuid = UUID.fromString("34df14f4-d5fc-4725-99b5-17baf9fc3304") //neo
     private val uuid = UUID.fromString("104f2220-2777-4a0b-9edc-786a1e9c6bd1") //avata
 
-
+    private val client = OkHttpClient()
+    private lateinit var webSocket: WebSocket
 
     // BLE connection variables
     private var bluetoothGatt: BluetoothGatt? = null
     private var isConnected = false
 
-    // Handler for frequent data transmission
+    // Handler for data transmission
     private val handler = Handler(Looper.getMainLooper())
-    private val sendDataRunnable = object : Runnable {
-        override fun run() {
-            if (isConnected) {
-                fetchAndSendData() // Fetch and send data
-            }
-            handler.postDelayed(this, 50) // 50ms = 20 times per second
-        }
-    }
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     private var latestJoystickData: String = ""
 
@@ -92,8 +75,6 @@ class BluetoothForegroundService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        database = FirebaseDatabase.getInstance()
-        dbReference = database.getReference("bluetooth_connections")
         bleAd = BluetoothAdapter.getDefaultAdapter()
 
         if (ActivityCompat.checkSelfPermission(
@@ -105,22 +86,18 @@ class BluetoothForegroundService : Service() {
         }
         bleAd.enable()
 
-        if (FirebaseApp.getApps(applicationContext).isEmpty()) {
-            FirebaseApp.initializeApp(applicationContext)
-        }
-
-        Log.d(TAG, "Firebase Database initialized")
+        Log.d(TAG, "Bluetooth Service initialized")
         Toast.makeText(this, "Bluetooth Service created", Toast.LENGTH_SHORT).show()
 
-        // Start listening to joystick data
-        setupDatabaseListener()
+        // Start listening to WebSocket
+        connectWebSocket()
     }
 
     override fun onDestroy() {
         super.onDestroy()
         run = false
-        handler.removeCallbacks(sendDataRunnable) // Stop the handler
         closeBluetoothConnection()
+//        webSocket.close(1000, "App closed")
         Toast.makeText(this, "Bluetooth Service destroyed", Toast.LENGTH_SHORT).show()
     }
 
@@ -180,44 +157,44 @@ class BluetoothForegroundService : Service() {
         bluetoothLeScanner.stopScan(scanCallback)
     }
 
-@SuppressLint("MissingPermission")
-private fun connectToDevice(device: BluetoothDevice) {
-    try {
-        val gattCallback = object : BluetoothGattCallback() {
-            override fun onConnectionStateChange(gatt: BluetoothGatt?, status: Int, newState: Int) {
-                if (newState == BluetoothProfile.STATE_CONNECTED) {
-                    Log.d(TAG, "Connected to GATT server.")
-                    isConnected = true
-                    state.postValue("Connected to device: ${device.address}")
-                    gatt?.discoverServices()
-                } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                    Log.d(TAG, "Disconnected from GATT server.")
-                    isConnected = false
-                    state.postValue("Disconnected from device: ${device.address}")
-                    bluetoothGatt = null
+    @SuppressLint("MissingPermission")
+    private fun connectToDevice(device: BluetoothDevice) {
+        try {
+            val gattCallback = object : BluetoothGattCallback() {
+                override fun onConnectionStateChange(gatt: BluetoothGatt?, status: Int, newState: Int) {
+                    if (newState == BluetoothProfile.STATE_CONNECTED) {
+                        Log.d(TAG, "Connected to GATT server.")
+                        isConnected = true
+                        state.postValue("Connected to device: ${device.address}")
+                        gatt?.discoverServices()
+                    } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+                        Log.d(TAG, "Disconnected from GATT server.")
+                        isConnected = false
+                        state.postValue("Disconnected from device: ${device.address}")
+                        bluetoothGatt = null
 
-                    // Try to reconnect automatically after a delay
-                    if (run) {
-                        handler.postDelayed({
-                            reconnectToDevice(device)
-                        }, 5000) // Delay before trying to reconnect (e.g., 5 seconds)
+                        // Try to reconnect automatically after a delay
+                        if (run) {
+                            handler.postDelayed({
+                                reconnectToDevice(device)
+                            }, 5000) // Delay before trying to reconnect (e.g., 5 seconds)
+                        }
+                    }
+                }
+
+                override fun onServicesDiscovered(gatt: BluetoothGatt?, status: Int) {
+                    if (status == BluetoothGatt.GATT_SUCCESS) {
+                        Log.d(TAG, "Services discovered successfully")
                     }
                 }
             }
 
-            override fun onServicesDiscovered(gatt: BluetoothGatt?, status: Int) {
-                if (status == BluetoothGatt.GATT_SUCCESS) {
-                    Log.d(TAG, "Services discovered successfully")
-                }
-            }
+            bluetoothGatt = device.connectGatt(this, false, gattCallback)
+        } catch (e: Exception) {
+            Log.e(TAG, "Could not connect to device: ${e.message}")
+            state.postValue("Connection failed: ${e.message}")
         }
-
-        bluetoothGatt = device.connectGatt(this, false, gattCallback)
-    } catch (e: Exception) {
-        Log.e(TAG, "Could not connect to device: ${e.message}")
-        state.postValue("Connection failed: ${e.message}")
     }
-}
 
     // Function to handle reconnection attempt after a disconnection
     private fun reconnectToDevice(device: BluetoothDevice) {
@@ -226,7 +203,6 @@ private fun connectToDevice(device: BluetoothDevice) {
             connectToDevice(device)  // Try to reconnect
         }
     }
-
 
     private fun closeBluetoothConnection() {
         try {
@@ -253,21 +229,27 @@ private fun connectToDevice(device: BluetoothDevice) {
             return
         }
 
+        Log.e(TAG, "Received ${data}")
+
         try {
             // Extract 6 values from the data string (each value is 3 characters)
-            val values = data.chunked(3).take(6).map {
-                it.toIntOrNull() ?: 0
-            }
+            val values = data.split(",")
+            val roll = values[0].toShort()
+            val pitch = values[1].toShort()
+            val yaw = values[2].toShort()
+            val throttle = values[3].toShort()
+            val camera = values[4].toShort()
+            val mode = values[5].toShort()
 
             // Pack the data into a 12-byte array (little-endian)
             val byteData = ByteBuffer.allocate(12)
                 .order(ByteOrder.LITTLE_ENDIAN)
-                .putShort(values[0].toShort())
-                .putShort(values[1].toShort())
-                .putShort(values[2].toShort())
-                .putShort(values[3].toShort())
-                .putShort(values[4].toShort())
-                .putShort(values[5].toShort())
+                .putShort(pitch)
+                .putShort(roll)
+                .putShort(throttle)
+                .putShort(yaw)
+                .putShort(camera)
+                .putShort(mode)
                 .array()
 
             // Find a writable characteristic
@@ -289,51 +271,42 @@ private fun connectToDevice(device: BluetoothDevice) {
         }
     }
 
-    private fun setupDatabaseListener() {
-        val joystickRef = FirebaseDatabase.getInstance().getReference("joystick_data/readable")
+    // Connect to the WebSocket server
+    private fun connectWebSocket() {
+        val request = Request.Builder().url("ws://82.81.197.132:5000/drone").build()
+        val listener = object : WebSocketListener() {
+            override fun onOpen(webSocket: WebSocket, response: Response) {
+                super.onOpen(webSocket, response)
+                Log.e(TAG, "WebSocket opened successfully")
+            }
 
-        joystickRef.addValueEventListener(object : ValueEventListener {
             @RequiresApi(Build.VERSION_CODES.Q)
-            override fun onDataChange(snapshot: DataSnapshot) {
-                if (snapshot.exists()) {
-                    val joystickValues = mutableMapOf<Int, Int>()
+            override fun onMessage(webSocket: WebSocket, text: String) {
+                super.onMessage(webSocket, text)
+                Log.d(TAG, "Received WebSocket message: $text")
 
-                    for (child in snapshot.children) {
-                        val key = child.key?.toIntOrNull()
-                        val value = child.getValue(Int::class.java)
-
-                        if (key != null && value != null) {
-                            joystickValues[key] = value
-                        }
-                    }
-
-                    if (joystickValues.isNotEmpty()) {
-                        // Extract exactly six values sorted by key and pad each to 3 characters
-                        latestJoystickData = joystickValues.entries
-                            .sortedBy { it.key }
-                            .take(6)
-                            .joinToString("") { it.value.toString().padStart(3, '0') }
-
-                        Log.d(TAG, "Joystick Data: $latestJoystickData")
-
-                        // Start sending data if not already started
-                        if (!handler.hasCallbacks(sendDataRunnable)) {
-                            handler.post(sendDataRunnable)
-                        }
+                // Directly send the received message to the Bluetooth device
+                mainHandler.post {
+                    if (isConnected) {
+                        // Assuming the WebSocket message is in the same format as the previous joystick data
+                        // If the format is different, you'll need to parse or transform the message accordingly
+                        sendDataToDevice(text)
                     }
                 }
             }
 
-            override fun onCancelled(error: DatabaseError) {
-                Log.e(TAG, "Database error: ${error.message}")
-            }
-        })
-    }
+            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                super.onFailure(webSocket, t, response)
+                Log.e(TAG, "WebSocket connection failed: ${t.message}")
 
-    private fun fetchAndSendData() {
-        if (latestJoystickData.isNotEmpty()) {
-            sendDataToDevice(latestJoystickData)
+                // Attempt to reconnect
+                mainHandler.postDelayed({
+                    connectWebSocket()
+                }, 5000)
+            }
         }
+        webSocket = client.newWebSocket(request, listener)
+        Log.e(TAG, "Connected to websocket")
     }
 
     private fun startAsForegroundService() {

@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">SHEMESH_MOSHE</string>
+    <string name="app_name">SHEMESH_MOSHE_AVATA</string>
 
     <string name="foreground_service_sample_notification_channel_general_name">General notification</string>
     <string name="foreground_service_sample_notification_title">Bluetooth Foreground Service DJI</string>

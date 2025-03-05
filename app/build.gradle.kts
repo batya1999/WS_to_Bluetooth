@@ -3,7 +3,7 @@ plugins {
     alias(libs.plugins.jetbrainsKotlinAndroid)
 
 //    id("com.android.application")
-    id("com.google.gms.google-services")
+//    id("com.google.gms.google-services")
 }
 
 android {
@@ -11,7 +11,7 @@ android {
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.landomen.sample.foregroundservice14"
+        applicationId = "com.landomen.sample.foregroundservice14_v2"
         minSdk = 28
         targetSdk = 34
         versionCode = 1
@@ -59,6 +59,8 @@ dependencies {
     implementation(libs.androidx.material3)
     implementation(libs.google.play.services.location)
     implementation(libs.firebase.database.ktx)
+    implementation(libs.okhttp)
+
 //    implementation(platform(libs.firebase.bom.v3390))
 //    implementation(libs.google.firebase.analytics)
 }
